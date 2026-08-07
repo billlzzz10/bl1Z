@@ -20,12 +20,12 @@ exclude = [
 ]
 
 [dependencies]
-jiff = "0.2"
+jiff = "0.2.35"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-insta = "1.34"
-pretty_assertions = "1.4"
+insta = "1.48.0"
+pretty_assertions = "1.4.1"
 
 [[bench]]
 name = "evaluation"
