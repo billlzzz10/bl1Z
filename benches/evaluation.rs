@@ -68,7 +68,7 @@ fn bench_nested_functions(c: &mut Criterion) {
     c.bench_function("nested_functions", |b| {
         b.iter(|| {
             let tokens = tokenize(std::hint::black_box(
-                "upper(contains(\"HELLO WORLD\", lower(\"world\")))",
+                "upper(join([\"hello\", lower(\"world\")], \" \"))",
             ))
             .unwrap();
             let ast = parse(&tokens).unwrap();
@@ -101,11 +101,156 @@ fn bench_map_operations(c: &mut Criterion) {
 
     c.bench_function("map_operations", |b| {
         b.iter(|| {
-            let tokens = tokenize(std::hint::black_box("len([1, 2, 3])")).unwrap();
+            let tokens = tokenize(std::hint::black_box("{a: 1, b: 2, c: 3}")).unwrap();
             let ast = parse(&tokens).unwrap();
             let _result = evaluate(&ast, &ctx, &registry).unwrap();
         })
     });
+}
+
+/// Benchmark Phase 8: Access Chaining (Dot and Bracket notation)
+fn bench_phase8_access_chaining(c: &mut Criterion) {
+    let mut registry = FunctionRegistry::new();
+    builtins::register_all(&mut registry);
+    let mut ctx = Context::new();
+
+    // Setup nested data
+    let mut inner = std::collections::HashMap::new();
+    inner.insert("score".to_string(), bl1z::Value::Number(100.0));
+    let mut user = std::collections::HashMap::new();
+    user.insert("profile".to_string(), bl1z::Value::Map(inner));
+    ctx.set("user", bl1z::Value::Map(user));
+
+    c.bench_function("phase8_access_chaining", |b| {
+        b.iter(|| {
+            let tokens =
+                tokenize(std::hint::black_box("user.profile.score + [10, 20][1]")).unwrap();
+            let ast = parse(&tokens).unwrap();
+            let _result = evaluate(&ast, &ctx, &registry).unwrap();
+        })
+    });
+}
+
+/// Benchmark Phase 9: Lambda & Higher-Order Functions
+fn bench_phase9_higher_order(c: &mut Criterion) {
+    let mut registry = FunctionRegistry::new();
+    builtins::register_all(&mut registry);
+    let ctx = Context::new();
+
+    c.bench_function("phase9_map_filter", |b| {
+        b.iter(|| {
+            // Complex chain: filter values > 5, then double them
+            let tokens = tokenize(std::hint::black_box(
+                "map(filter([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], x => x > 5), x => x * 2)",
+            ))
+            .unwrap();
+            let ast = parse(&tokens).unwrap();
+            let _result = evaluate(&ast, &ctx, &registry).unwrap();
+        })
+    });
+}
+
+/// Benchmark Phase 10: User-Defined Functions vs Lambda
+fn bench_udf_vs_lambda(c: &mut Criterion) {
+    let mut registry = FunctionRegistry::new();
+    builtins::register_all(&mut registry);
+
+    let mut group = c.benchmark_group("udf_vs_lambda");
+
+    // Lambda case
+    group.bench_function("lambda_call", |b| {
+        let mut ctx = Context::new();
+        let tokens = tokenize("x => x * 2").unwrap();
+        let ast = parse(&tokens).unwrap();
+        let lambda = evaluate(&ast, &ctx, &registry).unwrap();
+        ctx.set("double", lambda);
+
+        let call_tokens = tokenize("double(21)").unwrap();
+        let call_ast = parse(&call_tokens).unwrap();
+
+        b.iter(|| {
+            let _result = evaluate(&call_ast, &ctx, &registry).unwrap();
+        })
+    });
+
+    // UDF case
+    group.bench_function("udf_call", |b| {
+        let mut ctx = Context::new();
+        let tokens = tokenize("fn double(x) = x * 2; double(21)").unwrap();
+        let ast = parse(&tokens).unwrap();
+        let _ = bl1z::eval::evaluate_mut(&ast, &mut ctx, &registry).unwrap();
+
+        let call_tokens = tokenize("double(21)").unwrap();
+        let call_ast = parse(&call_tokens).unwrap();
+
+        b.iter(|| {
+            let _result = evaluate(&call_ast, &ctx, &registry).unwrap();
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark Phase 12: FormulaCache Performance
+fn bench_formula_cache(c: &mut Criterion) {
+    let mut registry = FunctionRegistry::new();
+    builtins::register_all(&mut registry);
+    let ctx = Context::new();
+    let formula = "if(1 + 2 > 0, sum([1, 2, 3]), 0)";
+
+    let mut group = c.benchmark_group("formula_cache");
+
+    group.bench_function("without_cache", |b| {
+        b.iter(|| {
+            let tokens = tokenize(formula).unwrap();
+            let ast = parse(&tokens).unwrap();
+            let _result = evaluate(&ast, &ctx, &registry).unwrap();
+        })
+    });
+
+    group.bench_function("with_cache_hit", |b| {
+        let mut cache = bl1z::cache::FormulaCache::new(10);
+        let tokens = tokenize(formula).unwrap();
+        let ast = parse(&tokens).unwrap();
+        cache.insert(formula.to_string(), ast);
+
+        b.iter(|| {
+            let cached_ast = cache.get(formula).unwrap();
+            let _result = evaluate(cached_ast, &ctx, &registry).unwrap();
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark Set and Range operations
+fn bench_advanced_types(c: &mut Criterion) {
+    let mut registry = FunctionRegistry::new();
+    builtins::register_all(&mut registry);
+    let ctx = Context::new();
+
+    let mut group = c.benchmark_group("advanced_types");
+
+    group.bench_function("set_operations", |b| {
+        b.iter(|| {
+            let tokens = tokenize(std::hint::black_box(
+                "set_intersection(set([1, 2, 3, 4, 5]), set([3, 4, 5, 6, 7]))",
+            ))
+            .unwrap();
+            let ast = parse(&tokens).unwrap();
+            let _result = evaluate(&ast, &ctx, &registry).unwrap();
+        })
+    });
+
+    group.bench_function("range_to_array", |b| {
+        b.iter(|| {
+            let tokens = tokenize(std::hint::black_box("range_to_array(range(0, 100))")).unwrap();
+            let ast = parse(&tokens).unwrap();
+            let _result = evaluate(&ast, &ctx, &registry).unwrap();
+        })
+    });
+
+    group.finish();
 }
 
 criterion_group!(
@@ -115,6 +260,11 @@ criterion_group!(
     bench_large_array,
     bench_nested_functions,
     bench_date_operations,
-    bench_map_operations
+    bench_map_operations,
+    bench_phase8_access_chaining,
+    bench_phase9_higher_order,
+    bench_udf_vs_lambda,
+    bench_formula_cache,
+    bench_advanced_types
 );
 criterion_main!(benches);

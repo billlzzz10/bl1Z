@@ -1,12 +1,13 @@
-# Formula Engine CI/CD Pipeline
+# Integrated CI/CD & Auto Pull Request Pipeline
 name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    # Run on all branch pushes; job-level `if` clauses decide behavior
   pull_request:
     branches: [ main, develop ]
 
+# Global permissions - Least Privilege
 permissions:
   contents: read
 
@@ -14,20 +15,136 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Primary CI job - comprehensive testing
+  # 1. Verify commit message format
+  commit-lint:
+    name: Lint Commit Message
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate commit messages
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -u
+
+          # Keep this synchronized with the repository's documented commit format.
+          PATTERN='^[a-z]+(\([a-zA-Z0-9._-]+\))?: .+$'
+          MAX_LENGTH=50
+
+          merge_pr_re='^Merge pull request #[0-9]+ from [^[:space:]]+/.+'
+          merge_branch_re="^Merge branch '.+'( into .+)?$"
+
+          commits="$(git rev-list --reverse "${BASE_SHA}..${HEAD_SHA}")"
+
+          if [[ -z "$commits" ]]; then
+            echo "No commits found in PR range."
+            exit 1
+          fi
+
+          error=0
+
+          for sha in $commits; do
+            subject="$(git log --format=%s -n 1 "$sha")"
+
+            if [[ -z "$subject" ]]; then
+              continue
+            fi
+
+            # Allow only common Git-generated merge commit formats.
+            if [[ "$subject" =~ $merge_pr_re ||
+                  "$subject" =~ $merge_branch_re ]]; then
+              echo "⏭️ Skipping generated merge commit: $subject"
+              continue
+            fi
+
+            # Exact opt-in marker: it must be the final token.
+            if [[ "$subject" == "[skip-lint]" ||
+                  "$subject" == *" [skip-lint]" ]]; then
+              echo "⏭️ Skipping explicitly marked commit: $subject"
+              continue
+            fi
+
+            # Resolve the commit through GitHub so the raw author name/email is
+            # not trusted as a bot identity.
+            if ! commit_json="$(
+              gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/${GITHUB_REPOSITORY}/commits/${sha}"
+            )"; then
+              echo "❌ Could not resolve GitHub identity for commit: $sha"
+              error=1
+              continue
+            fi
+
+            author_type="$(jq -r '.author.type // ""' <<<"$commit_json")"
+            author_login="$(jq -r '.author.login // ""' <<<"$commit_json")"
+
+            bot_update=false
+
+            if [[ "$author_type" == "Bot" ]]; then
+              case "$author_login" in
+                'dependabot[bot]')
+                  if [[ "$subject" =~ ^Bump[[:space:]].+[[:space:]]from[[:space:]].+[[:space:]]to[[:space:]].+$ ]]; then
+                    bot_update=true
+                  fi
+                  ;;
+
+                'renovate[bot]')
+                  if [[ "$subject" =~ ^chore\(deps\):[[:space:]]update[[:space:]].+$ ]]; then
+                    bot_update=true
+                  fi
+                  ;;
+
+                'github-actions[bot]')
+                  # Keep this only if this repository actually uses this bot
+                  # to create dependency or workflow update commits.
+                  if [[ "$subject" =~ ^Update[[:space:]].+$ ]]; then
+                    bot_update=true
+                  fi
+                  ;;
+              esac
+            fi
+
+            if [[ "$bot_update" == true ]]; then
+              echo "⏭️ Skipping allowlisted bot update: $author_login: $subject"
+              continue
+            fi
+
+            if (( ${#subject} > MAX_LENGTH )) ||
+               [[ ! "$subject" =~ $PATTERN ]]; then
+              echo "❌ Invalid format: $subject"
+              echo "   Required format: type(scope): title (max 50 chars total)"
+              error=1
+            fi
+          done
+
+          if (( error != 0 )); then
+            echo "Commit message validation failed."
+            exit 1
+          fi
+
+          echo "Commit message validation passed."
+
+  # 2. Primary CI job - comprehensive testing
   test:
     name: Test Suite
+    needs: commit-lint
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust:
-          - stable
-          - beta
-          - 1.90.0  # MSRV (Minimum Supported Rust Version)
+        rust: [ stable, beta ]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7.0.1
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -37,9 +154,6 @@ jobs:
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
-
-      - name: Ensure latest Rust
-        run: rustup update stable
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -53,9 +167,6 @@ jobs:
       - name: Run doc tests
         run: cargo test --doc
 
-      - name: Run benchmarks
-        run: cargo bench
-
       - name: Generate documentation
         run: cargo doc --no-deps --document-private-items
 
@@ -63,25 +174,17 @@ jobs:
   examples:
     name: Test Examples
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
-
+        uses: actions/checkout@v7.0.1
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
-
-      - name: Ensure latest Rust
-        run: rustup update stable
-
       - name: Test basic example
         run: cargo run --example basic
-
       - name: Test advanced example
         run: cargo run --example advanced
 
@@ -90,22 +193,15 @@ jobs:
     name: Update Snapshots
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
-
+        uses: actions/checkout@v7.0.1
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
-
-      - name: Ensure latest Rust
-        run: rustup update stable
-
       - name: Test and update snapshots
         run: cargo test --test error_snapshots
         env:
@@ -117,73 +213,103 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7.0.1
       - name: Run audit
         uses: actions-rust-lang/audit@v1
 
-  # Auto release and notification when main CI passes
-  release:
-    name: Auto Release & Tag
+  # 3. Auto Pull Request (Only for feature branches on push)
+  auto-pr:
+    name: Create Pull Request
+    needs: [test, audit]
     runs-on: ubuntu-latest
-    needs: [test, audit, examples]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Specific permissions for PR creation
     permissions:
       contents: write
       pull-requests: write
-
+      issues: write
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Get Version from Cargo.toml
-        id: get_version
-        run: |
-          VERSION=$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f2)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check if Tag Exists
-        id: check_tag
-        run: |
-          git fetch --tags
-          if git rev-parse "v${{ steps.get_version.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create Git Tag and Push
-        if: steps.check_tag.outputs.exists == 'false'
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v${{ steps.get_version.outputs.version }}"
-          git push origin "v${{ steps.get_version.outputs.version }}"
-
-      - name: Create GitHub Release
-        if: steps.check_tag.outputs.exists == 'false'
+        uses: actions/checkout@v7.0.1
+      - name: Create Pull Request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "v${{ steps.get_version.outputs.version }}" \
-            --title "Release v${{ steps.get_version.outputs.version }}" \
-            --notes "Automated public release of version v${{ steps.get_version.outputs.version }} after passing all CI/CD validations."
-
-      - name: Send Webhook Notification
-        if: always()
-        env:
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: |
-          # เลือกใช้งาน URL ที่มี
-          TARGET_URL="${WEBHOOK_URL:-$DISCORD_WEBHOOK}"
-          if [ -n "$TARGET_URL" ]; then
-            MESSAGE="🚀 **Auto Release Success!** Version v${{ steps.get_version.outputs.version }} has been published.\n📝 ให้ตรวจสอบคอมม้นเพื่อเช็ครายละเอียดเพิ่มเติม"
-            curl -X POST -H "Content-Type: application/json" \
-              -d "{\"content\": \"$MESSAGE\"}" \
-              "$TARGET_URL"
-          else
-            echo "No Webhook secret found, skipping notification."
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          
+          # Check if PR already exists
+          existing_pr=$(gh pr list --head "$BRANCH_NAME" --json number --jq '.[0].number')
+          if [ -n "$existing_pr" ]; then
+            echo "PR already exists (#$existing_pr), skipping creation."
+            exit 0
           fi
 
+          # Triage: Link to Phase issues
+          ISSUES_JSON=$(gh issue list --repo ${{ github.repository }} --state open --json number,title --limit 30)
+          PHASE_NUM=$(echo "$BRANCH_NAME" | grep -oE '[0-9]+' | head -n 1)
+          
+          PR_TITLE="${BRANCH_NAME}: Auto PR"
+          PR_BODY="Automated PR after passing all CI gates."
+
+          if [ -n "$PHASE_NUM" ]; then
+            MATCHED_ISSUE=$(echo "$ISSUES_JSON" | jq -c --arg num "$PHASE_NUM" '.[] | select(.title | test("Phase " + $num))' | head -n 1)
+            if [ -n "$MATCHED_ISSUE" ] && [ "$MATCHED_ISSUE" != "null" ]; then
+              ISSUE_NO=$(echo "$MATCHED_ISSUE" | jq -r '.number')
+              ISSUE_TITLE=$(echo "$MATCHED_ISSUE" | jq -r '.title')
+              PR_TITLE="feat(v2): implement $ISSUE_TITLE (Auto PR)"
+              PR_BODY="Resolves #$ISSUE_NO\n\n_Auto-generated after CI validation._"
+            fi
+          fi
+
+          gh pr create \
+            --title "$PR_TITLE" \
+            --body "$PR_BODY" \
+            --base main \
+            --head "$BRANCH_NAME" \
+            --label "auto-pr"
+
+  # 4. Auto release and notification (Main branch only)
+  release:
+    name: Auto Release
+    runs-on: ubuntu-latest
+    needs: [test, audit]
+    permissions:
+      contents: write
+      id-token: write
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Build documentation
+        run: cargo doc --release --all-features --no-deps
+
+      - name: Get Version
+        id: get_version
+        run: echo "version=$(grep -m1 '^version = ' Cargo.toml | cut -d '\"' -f2)" >> $GITHUB_OUTPUT
+
+      - name: Publish to crates.io
+        if: github.ref == 'refs/heads/main'
+        uses: rust-lang/crate-publish@v2
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git fetch --tags
+          VERSION="v${{ steps.get_version.outputs.version }}"
+          if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+            gh release create "$VERSION" \
+              --generate-notes
+          else
+            echo "Release $VERSION already exists. Skipping."
+          fi

@@ -5,6 +5,72 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.2.16] - 2026-08-05
+
+### Added
+- **CLI Binary**: New `bl1z` binary with `eval`, `repl`, `functions`, and `plugins` subcommands (cargo-style exit codes: 0 = ok, 1 = eval error, 2 = usage error).
+- **JSON Plugins**: Manifest-driven function registration via `load_json_plugin` / `JsonPlugin`, with engine-version pinning. Script functions delegate to external interpreters (python3, python3.11-13, node, deno, bun) via JSON on stdin/stdout.
+- **Plugin Store**: CLI management of installed plugins (`~/.bl1z/plugins`, overridable with `BL1Z_PLUGINS_DIR`) — `install`, `link`, `list`, `enable`, `disable`.
+- **Plugin Contract**: `proto/bl1z_plugin.proto` as the single source of truth; `tools/gen_schema.py` generates `plugin-manifest.schema.json`, `schema-store.schema.json`, and `plugin-protocol.schema.json` from it (all plugin-system interfaces).
+- **Plugin Examples**: `math_extra`, `string_utils`, and `obsidian_like` manifests with Python script functions under `examples/plugins/`.
+
+### Changed
+- **Docs**: Thai documentation reorganized into `docs/th/`; learnings archived.
+- **CI**: Added crates.io publish workflow; version-bump tooling (`scripts/bump-versions.sh`, `.bump-version.json`).
+- **Dependencies**: `jiff` and the rust-dependencies group updated (dependabot #44–#48).
+
+### Removed
+- Stale duplicate sources: `src/value_main.rs`, `src/value_pr26.rs`, `src/builtins/higher_order_original.rs`, `acp.yaml`.
+
+## [0.2.15] - 2026-06-17
+
+### Added
+- **Lambda & Higher-Order Functions**: Added support for lambda expressions `(x) => x * 2` and functions like `map`, `filter`, `reduce`, `sort`, `group_by`, `unique`.
+- **User-Defined Functions**: New syntax `fn name(params) = expression` to define reusable functions within the context.
+- **Advanced Data Types**: Native support for `DateTime` (jiff), `Duration`, `Set`, and `Range`.
+- **DateTime Literals**: Added `@` operator for date literals (e.g., `@2024-01-01`).
+- **Set Operations**: New built-in functions for sets: `set_union`, `set_intersection`, `set_difference`, and `set_in`.
+- **Math Extensions**: Added `pi()`, `round()`, `ceil()`, `floor()`, `sqrt()`, `pow()`, `sin()`, `cos()`, `tan()`, and `random()`.
+- **String Extensions**: Added `trim()`, `trim_start()`, `trim_end()`, `split()`, `replace()`, and `substring()`.
+- **Serialization**: Added `serde` support for `Value`, `Expr`, and `Context` behind the `serialization` feature gate.
+- **Context Snapshot**: `Context::to_json()` and `Context::from_json()` for state persistence.
+- **Caching**: Added `FormulaCache` for efficient LRU caching of parsed expressions.
+- **Plugin SDK**: Foundation for external plugins with `Plugin` trait and `PluginManager`.
+- **Sequence Expressions**: Support for multiple expressions separated by semicolons `;`.
+
+### Changed
+- **Lexer**: Added tokens for `@`, `=>`, `fn`, `=`, and `;`.
+- **Value**: Added variants for `DateTime`, `Duration`, `Set`, and `Range`.
+- **Builtins**: Organized into category-specific modules (`math.rs`, `string.rs`, `sets.rs`, `higher_order.rs`).
+
+### Fixed
+- **Higher-Order Functions**: Optimized registry passing to prevent unnecessary clones during iteration.
+- **Clippy**: Resolved `cloned_ref_to_slice_refs` warnings with `std::slice::from_ref`.
+
+### Changed
+- **Date Builtins**: `now()` and `date()` return native `Value::DateTime` instead of `Value::String`.
+- **Date Input**: `year()`, `month()`, `day()`, `date_add()`, `date_diff()` accept both `Value::DateTime` and `Value::String`.
+- **Error Messages**: All builtins now report expected vs received types (e.g., `abs ต้องการ Number แต่ได้ String`).
+- **Version**: Bumped from `0.2.0` to `0.2.15`.
+
+### Optimization (Phase 14)
+- **AST Optimizer** (`src/optimizer.rs`): Constant folding, algebraic identities (`x+0`, `x*1`, `x*0`, `--x`), string concat folding, comparison folding.
+- **`evaluate_optimized()`**: New entry point that runs the optimizer before evaluation.
+- **Benchmarks**: 11 criterion benchmarks covering arithmetic, complex expressions, arrays, nested functions, dates, maps, access chaining, HOF, UDF vs lambda, formula cache, and advanced types.
+
+### Error Recovery (Phase 15)
+- **`parse_with_recovery()`**: Collects all parse errors instead of fail-fast, skipping to next semicolon.
+- **`EngineConfig`**: Configurable limits — `max_formula_length` (default 10,000), `max_depth` (default 100), `max_time_ms` (optional timeout).
+- **`evaluate_with_config()`** and `parse_with_config()`: Config-aware evaluation and parsing.
+- **Timeout**: Uses `std::time::Instant` to enforce time limits (checked every 1,000 eval steps).
+- **Error Code E901**: Recovery errors for partial parse results.
+
+### Documentation
+- **PGO Guide** (`docs/PGO.md`): Profile-Guided Optimization workflow for bl1z.
+- **Bilingual Docs**: Thai translations for all project-facing documentation.
+
 ## [0.2.0] - 2026-05-18
 
 ### Added
@@ -34,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-05-07
 
 ### Added
-- **Core Formula Engine**: Complete implementation of lexer, parser, AST, and evaluator
+- **Core bl1z**: Complete implementation of lexer, parser, AST, and evaluator
 - **Data Types**: Support for Number, String, Bool, Null, Array, and Map types
 - **Array Literals**: Syntax `[1, 2, 3]` with nested array support
 - **Map Literals**: Syntax `{key: "value"}` for object-like data structures

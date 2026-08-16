@@ -1,13 +1,12 @@
 # bl1z
 
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
-[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://crates.io/crates/bl1z)
-[![Build Status](https://github.com/bl1nk-bot/poe-sdk-rs/workflows/CI/badge.svg)](https://github.com/bl1nk-bot/poe-sdk-rs/actions)
+| Build | Quality | License |
+|:---:|:---:|:---:|
+| [![CI](https://github.com/bl1nk-bot/bl1z/actions/workflows/ci.yml/badge.svg)](https://github.com/bl1nk-bot/bl1z/actions/workflows/ci.yml) | [![CI Failure Handler](https://github.com/bl1nk-bot/bl1z/actions/workflows/ci-fail.yml/badge.svg)](https://github.com/bl1nk-bot/bl1z/actions/workflows/ci-fail.yml) | [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE) |
+
+[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange.svg)](https://www.rust-lang.org)
+[![Version](https://img.shields.io/badge/version-0.2.16-green.svg)](https://crates.io/crates/bl1z)
 [![Documentation](https://docs.rs/bl1z/badge.svg)](https://docs.rs/bl1z)
-[![Crates.io](https://img.shields.io/crates/v/bl1z.svg)](https://crates.io/crates/bl1z)
-[![Downloads](https://img.shields.io/crates/d/bl1z.svg)](https://crates.io/crates/bl1z)
-[![Code Coverage](https://codecov.io/gh/bl1nk-bot/poe-sdk-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/bl1nk-bot/poe-sdk-rs)
 
 ## 📖 ภาพรวม
 
@@ -35,7 +34,7 @@
 
 ```toml
 [dependencies]
-bl1z = "0.2.0"
+bl1z = "0.2.16"
 ```
 
 หรือหากต้องการใช้จาก source code ในเครื่อง:
@@ -43,6 +42,15 @@ bl1z = "0.2.0"
 ```toml
 [dependencies]
 bl1z = { path = "./path/to/bl1z" }
+```
+
+ใช้เป็น CLI (โปรแกรมคำสั่ง):
+
+```bash
+# ติดตั้งจาก source ในเครื่อง
+./scripts/install.sh        # Termux: ลง $PREFIX/bin / อื่น ๆ: ลง ~/.cargo/bin
+# หรือติดตั้งเอง:
+# cargo install --path . --root "$HOME/.cargo" --force
 ```
 
 ---
@@ -256,22 +264,23 @@ bl1z/
 - [x] Error Reporting: รายงานข้อผิดพลาดพร้อมตำแหน่ง
 - [x] Documentation: Doc-tests และ integration tests
 
-### ✅ เสร็จสมบูรณ์ (V2 - Phase 8 & 8.5)
+### ✅ เสร็จสมบูรณ์ (V2)
 
 - [x] Access chaining: `obj.prop`, `arr[0]`, `users[0].name`
-- [x] Nested access: `a.b[0].c.d`, `{a: {b: 1}}.a.b`
-- [x] Context scoping: parent chain resolution, variable shadowing
-- [x] Context utilities: `with_parent()`, `get_all()`, `depth()`
-- [x] Error codes: E207 (PropertyNotFound), E208 (IndexOutOfBounds)
+- [x] Functional programming: Lambda expressions `(x) => ...`
+- [x] Higher-order functions: `map`, `filter`, `reduce`, `sort`, etc.
+- [x] User-defined functions: `fn name(params) = expr`
+- [x] Advanced types: `DateTime`, `Duration`, `Set`, `Range`
+- [x] Serialization & Caching: JSON support and LRU Formula Cache
+- [x] Plugin SDK foundation
+- [x] Extended Math & String functions
 
-### 📋 แผนในอนาคต (Phase 9+)
+### 📋 แผนในอนาคต (Phase 14+)
 
-- [ ] Lambda & higher-order functions (`map`, `filter`, `reduce`)
-- [ ] User-defined functions (`def name(params) = expr`)
-- [ ] Native `DateTime`/`Duration` via `jiff`
-- [ ] Serialization & caching
-- [ ] Plugin SDK
-- [ ] Performance optimization
+- [ ] Performance optimization (Constant folding, Vectorization)
+- [ ] Native Date type refactor for all built-ins
+- [ ] Error recovery & Security limits
+- [ ] WASM-based plugin sandbox (V3)
 
 ---
 
@@ -329,7 +338,7 @@ cargo test --doc
 ## 🙏 ขอบคุณ
 
 - สร้างด้วย ❤️ โดยใช้ [Rust](https://www.rust-lang.org/)
-- ได้รับแรงบันดาลใจจาก Notion formula engine
+- ได้รับแรงบันดาลใจจาก Notion bl1z
 - พัฒนาสำหรับ POE SDK ecosystem
 
 ---

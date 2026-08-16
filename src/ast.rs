@@ -2,6 +2,10 @@ use crate::span::Span;
 use crate::value::Value;
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -18,19 +22,32 @@ pub enum BinaryOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub enum UnaryOp {
     Neg,
+    Pos,
     Not,
 }
 
 /// ข้อมูลตำแหน่งของ expression ใน source
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct ExprMeta {
     pub span: Span,
 }
 
 /// นิพจน์แต่ละตัวจะมีข้อมูล Span ติดไปด้วย
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct SpannedExpr {
     pub expr: Expr,
     pub meta: ExprMeta,
@@ -47,6 +64,10 @@ impl SpannedExpr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub enum Expr {
     Literal(Value),
     Variable(String),

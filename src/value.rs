@@ -1,136 +1,215 @@
 use crate::ast::SpannedExpr;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
-/// Represents a captured scope snapshot for closures.
-/// Stores a copy of variables visible at lambda creation time.
-/// Phase 9: Lambda & Higher-Order Functions
-pub type CapturedScope = std::collections::BTreeMap<String, Value>;
+/// แทนค่าขอบเขตที่ถูกจับ (Captured Scope) สำหรับ Closures
+/// เก็บสำเนาของตัวแปรที่มองเห็นได้ ณ เวลาที่สร้าง Lambda
+pub type CapturedScope = BTreeMap<String, Value>;
 
-/// Represents a value in the formula engine.
+/// Wrapper สำหรับ jiff::Span เพื่อให้รองรับ hashing และ equality
+#[derive(Clone, Debug)]
+pub struct Duration(pub jiff::Span);
+
+impl PartialEq for Duration {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_string() == other.0.to_string()
+    }
+}
+
+impl Eq for Duration {}
+
+impl std::hash::Hash for Duration {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_string().hash(state);
+    }
+}
+
+impl std::fmt::Display for Duration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// แทนค่าชนิดข้อมูลต่างๆ ในระบบ bl1z
 ///
-/// Values are the result of evaluating expressions and can be used
-/// as function arguments or stored in contexts.
-///
-/// # Supported Types
-///
-/// - **Number**: 64-bit floating point numbers for mathematical operations
-/// - **String**: UTF-8 strings for text operations
-/// - **Bool**: Boolean values for logical operations
-/// - **Null**: Represents absence of value or uninitialized state
-/// - **Array**: Ordered collection of values, supports nesting
-/// - **Map**: Key-value dictionary with string keys
-///
-/// # Type Safety
-///
-/// All operations perform runtime type checking. Attempting to perform
-/// incompatible operations (e.g., adding string to number) will result
-/// in a `TypeError` with detailed error messages.
-///
-/// # Examples
-///
+/// # ตัวอย่างการใช้งาน
 /// ```
 /// use bl1z::Value;
-/// use std::collections::HashMap;
-///
-/// // Basic values
-/// let num = Value::Number(42.0);
-/// let str = Value::String("hello".to_string());
-/// let bool_val = Value::Bool(true);
-/// let null_val = Value::Null;
-///
-/// // Arrays
-/// let arr = Value::Array(vec![
-///     Value::Number(1.0),
-///     Value::Number(2.0),
-///     Value::String("three".to_string())
-/// ]);
-///
-/// // Maps
-/// let mut map = HashMap::new();
-/// map.insert("name".to_string(), Value::String("John".to_string()));
-/// map.insert("age".to_string(), Value::Number(30.0));
-/// let map_val = Value::Map(map);
+/// let val = Value::Number(42.0);
+/// assert_eq!(val.to_string(), "42");
 /// ```
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum Value {
-    /// 64-bit floating point number for mathematical calculations.
-    ///
-    /// Supports all standard arithmetic operations and comparisons.
-    /// Uses `f64` for maximum precision and compatibility.
+    /// ตัวเลขทศนิยม 64-bit
     Number(f64),
-
-    /// UTF-8 string for text operations and concatenation.
-    ///
-    /// Supports string functions like `len()`, `upper()`, `contains()`, etc.
-    /// Can be concatenated with `+` operator.
+    /// ข้อความ UTF-8
     String(String),
-
-    /// Boolean value for logical operations.
-    ///
-    /// Used in conditional expressions and logical operators (`&&`, `||`, `!`).
+    /// ค่าทางตรรกศาสตร์ (true/false)
     Bool(bool),
-
-    /// Represents null/absent value.
-    ///
-    /// Useful for optional values and uninitialized states.
-    /// Cannot participate in most operations (will cause TypeError).
+    /// ค่าว่าง
     Null,
-
-    /// Ordered collection of values with O(1) indexing.
-    ///
-    /// Supports nesting (arrays of arrays) and heterogeneous types.
-    /// Used with collection functions like `sum()`, `avg()`, `count()`, `join()`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use bl1z::Value;
-    /// let numbers = Value::Array(vec![
-    ///     Value::Number(1.0),
-    ///     Value::Number(2.0),
-    ///     Value::Number(3.0)
-    /// ]);
-    ///
-    /// let nested = Value::Array(vec![
-    ///     Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]),
-    ///     Value::Array(vec![Value::Number(3.0), Value::Number(4.0)])
-    /// ]);
-    /// ```
+    /// รายการข้อมูล (Array)
     Array(Vec<Value>),
+    /// ข้อมูลแบบ Key-Value (Map)
+    Map(HashMap<String, Value>),
+    /// ฟังก์ชัน Lambda หรือ Closure
+    /// เก็บ (Body, Params, Captured Variables, Context Functions)
+    Lambda(
+        Rc<SpannedExpr>,
+        Vec<String>,
+        CapturedScope,
+        BTreeMap<String, crate::context::UserFunction>,
+    ),
+    /// วันที่และเวลา (Native Timestamp via jiff)
+    DateTime(jiff::Timestamp),
+    /// ช่วงเวลา (Duration via jiff)
+    Duration(Duration),
+    /// เซตของข้อมูลที่ไม่มีค่าซ้ำ (Set)
+    Set(HashSet<Value>),
+    /// ช่วงของตัวเลข (Range)
+    Range { start: i64, end: i64, step: i64 },
+}
 
-    /// Key-value dictionary with string keys.
-    ///
-    /// Keys must be valid identifiers. Values can be any type including nested maps.
-    /// Currently used for object literals but can be extended for more complex data structures.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use bl1z::Value;
-    /// use std::collections::HashMap;
-    ///
-    /// let mut person = HashMap::new();
-    /// person.insert("name".to_string(), Value::String("Alice".to_string()));
-    /// person.insert("age".to_string(), Value::Number(25.0));
-    /// person.insert("active".to_string(), Value::Bool(true));
-    ///
-    /// let person_val = Value::Map(person);
-    /// ```
-    Map(std::collections::HashMap<String, Value>),
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Number(a), Value::Number(b)) => {
+                if a.is_nan() && b.is_nan() {
+                    true
+                } else {
+                    a == b
+                }
+            }
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Null, Value::Null) => true,
+            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Map(a), Value::Map(b)) => {
+                if a.len() != b.len() {
+                    return false;
+                }
+                for (k, v) in a.iter() {
+                    match b.get(k) {
+                        Some(other_v) => {
+                            if v != other_v {
+                                return false;
+                            }
+                        }
+                        None => return false,
+                    }
+                }
+                true
+            }
+            (Value::Lambda(_, _, _, _), Value::Lambda(_, _, _, _)) => false,
+            (Value::DateTime(a), Value::DateTime(b)) => a == b,
+            (Value::Duration(a), Value::Duration(b)) => a == b,
+            (Value::Set(a), Value::Set(b)) => a == b,
+            (
+                Value::Range {
+                    start: a_start,
+                    end: a_end,
+                    step: a_step,
+                },
+                Value::Range {
+                    start: b_start,
+                    end: b_end,
+                    step: b_step,
+                },
+            ) => a_start == b_start && a_end == b_end && a_step == b_step,
+            _ => false,
+        }
+    }
+}
 
-    /// A closure: captures parameters, body, and the lexical scope.
-    ///
-    /// Phase 9: Lambda & Higher-Order Functions
-    /// Used for storing lambda expressions as first-class values.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use bl1z::Value;
-    /// // Lambda values are created by the evaluator when parsing lambda syntax
-    /// // (x) => x + 1
-    /// ```
-    Lambda(Rc<SpannedExpr>, Vec<String>, CapturedScope),
+impl Eq for Value {}
+
+impl std::hash::Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Number(n) => {
+                0u8.hash(state);
+                if n.is_nan() {
+                    u64::MAX.hash(state);
+                } else if n.is_infinite() {
+                    (*n as u64).hash(state);
+                } else {
+                    n.to_bits().hash(state);
+                }
+            }
+            Value::String(s) => {
+                1u8.hash(state);
+                s.hash(state);
+            }
+            Value::Bool(b) => {
+                2u8.hash(state);
+                b.hash(state);
+            }
+            Value::Null => {
+                3u8.hash(state);
+            }
+            Value::Array(arr) => {
+                4u8.hash(state);
+                for v in arr {
+                    v.hash(state);
+                }
+            }
+            Value::Map(map) => {
+                5u8.hash(state);
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                for k in keys {
+                    k.hash(state);
+                    map.get(k).unwrap().hash(state);
+                }
+            }
+            Value::Lambda(expr, params, _, _) => {
+                6u8.hash(state);
+                params.hash(state);
+                (expr.as_ref() as *const SpannedExpr).hash(state);
+            }
+            Value::DateTime(dt) => {
+                7u8.hash(state);
+                dt.to_string().hash(state);
+            }
+            Value::Duration(d) => {
+                8u8.hash(state);
+                d.0.to_string().hash(state);
+            }
+            Value::Set(set) => {
+                9u8.hash(state);
+                let mut sorted: Vec<&Value> = set.iter().collect();
+                sorted.sort_by_key(|v| format!("{:?}", v));
+                for v in sorted {
+                    v.hash(state);
+                }
+            }
+            Value::Range { start, end, step } => {
+                10u8.hash(state);
+                start.hash(state);
+                end.hash(state);
+                step.hash(state);
+            }
+        }
+    }
+}
+
+impl Value {
+    /// คืนชื่อชนิดข้อมูลของค่า (type name) สำหรับใช้ในข้อความ error
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Value::Number(_) => "Number",
+            Value::String(_) => "String",
+            Value::Bool(_) => "Bool",
+            Value::Null => "Null",
+            Value::Array(_) => "Array",
+            Value::Map(_) => "Map",
+            Value::Lambda(..) => "Lambda",
+            Value::DateTime(_) => "DateTime",
+            Value::Duration(_) => "Duration",
+            Value::Set(_) => "Set",
+            Value::Range { .. } => "Range",
+        }
+    }
 }
 
 impl std::fmt::Display for Value {
@@ -162,8 +241,33 @@ impl std::fmt::Display for Value {
                 }
                 write!(f, "}}")
             }
-            Value::Lambda(_, params, _) => {
+            Value::Lambda(_, params, _, _) => {
                 write!(f, "({}) => ...", params.join(", "))
+            }
+            Value::DateTime(dt) => {
+                write!(f, "@{}", dt)
+            }
+            Value::Duration(d) => {
+                write!(f, "{}", d.0)
+            }
+            Value::Set(set) => {
+                let mut sorted: Vec<&Value> = set.iter().collect();
+                sorted.sort_by_key(|v| format!("{}", v));
+                write!(f, "{{")?;
+                for (i, v) in sorted.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "}}")
+            }
+            Value::Range { start, end, step } => {
+                if *step == 1 {
+                    write!(f, "{}..{}", start, end)
+                } else {
+                    write!(f, "{}..{}:{}", start, end, step)
+                }
             }
         }
     }
@@ -189,7 +293,7 @@ impl std::fmt::Debug for Value {
             Value::Map(map) => {
                 let mut sorted_keys: Vec<&String> = map.keys().collect();
                 sorted_keys.sort();
-                write!(f, "Map({{")?;
+                write!(f, "Map({{",)?;
                 for (i, k) in sorted_keys.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -198,8 +302,208 @@ impl std::fmt::Debug for Value {
                 }
                 write!(f, "}})")
             }
-            Value::Lambda(_, params, _) => {
+            Value::Lambda(_, params, _, _) => {
                 write!(f, "Lambda(({}) => ...)", params.join(", "))
+            }
+            Value::DateTime(dt) => write!(f, "DateTime({})", dt),
+            Value::Duration(d) => write!(f, "Duration({})", d.0),
+            Value::Set(set) => {
+                let mut sorted: Vec<&Value> = set.iter().collect();
+                sorted.sort_by_key(|v| format!("{:?}", v));
+                write!(f, "Set({{",)?;
+                for (i, v) in sorted.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{:?}", v)?;
+                }
+                write!(f, "}})")
+            }
+            Value::Range { start, end, step } => {
+                write!(f, "Range({}..{}:{})", start, end, step)
+            }
+        }
+    }
+}
+
+// ── Serialization (Phase 12) ─────────────────────────────────────────────
+#[cfg(feature = "serialization")]
+mod serde_impl {
+    use super::*;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    impl Serialize for Value {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeMap;
+            match self {
+                Value::Number(n) => {
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    map.serialize_entry("type", "number")?;
+                    map.serialize_entry("value", n)?;
+                    map.end()
+                }
+                Value::String(s) => {
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    map.serialize_entry("type", "string")?;
+                    map.serialize_entry("value", s)?;
+                    map.end()
+                }
+                Value::Bool(b) => {
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    map.serialize_entry("type", "bool")?;
+                    map.serialize_entry("value", b)?;
+                    map.end()
+                }
+                Value::Null => {
+                    let mut map = serializer.serialize_map(Some(1))?;
+                    map.serialize_entry("type", "null")?;
+                    map.end()
+                }
+                Value::Array(arr) => {
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    map.serialize_entry("type", "array")?;
+                    map.serialize_entry("value", arr)?;
+                    map.end()
+                }
+                Value::Map(m) => {
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    map.serialize_entry("type", "map")?;
+                    map.serialize_entry("value", m)?;
+                    map.end()
+                }
+                Value::Lambda(..) => Err(serde::ser::Error::custom(
+                    "cannot serialize Lambda (runtime closure)",
+                )),
+                Value::DateTime(dt) => {
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    map.serialize_entry("type", "datetime")?;
+                    map.serialize_entry("value", &dt.to_string())?;
+                    map.end()
+                }
+                Value::Duration(d) => {
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    map.serialize_entry("type", "duration")?;
+                    map.serialize_entry("value", &d.0.to_string())?;
+                    map.end()
+                }
+                Value::Set(set) => {
+                    let mut sorted: Vec<&Value> = set.iter().collect();
+                    sorted.sort_by_key(|v| format!("{:?}", v));
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    map.serialize_entry("type", "set")?;
+                    map.serialize_entry("value", &sorted)?;
+                    map.end()
+                }
+                Value::Range { start, end, step } => {
+                    let mut map = serializer.serialize_map(Some(4))?;
+                    map.serialize_entry("type", "range")?;
+                    map.serialize_entry("start", start)?;
+                    map.serialize_entry("end", end)?;
+                    map.serialize_entry("step", step)?;
+                    map.end()
+                }
+            }
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Value {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let map = serde_json::Value::deserialize(deserializer)?;
+            let obj = map
+                .as_object()
+                .ok_or_else(|| serde::de::Error::custom("expected a JSON object"))?;
+            let type_str = obj
+                .get("type")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| serde::de::Error::custom("missing \"type\" field"))?;
+            match type_str {
+                "number" => {
+                    let val = obj
+                        .get("value")
+                        .and_then(|v| v.as_f64())
+                        .ok_or_else(|| serde::de::Error::custom("invalid number value"))?;
+                    Ok(Value::Number(val))
+                }
+                "string" => {
+                    let val = obj
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| serde::de::Error::custom("invalid string value"))?;
+                    Ok(Value::String(val.to_string()))
+                }
+                "bool" => {
+                    let val = obj
+                        .get("value")
+                        .and_then(|v| v.as_bool())
+                        .ok_or_else(|| serde::de::Error::custom("invalid bool value"))?;
+                    Ok(Value::Bool(val))
+                }
+                "null" => Ok(Value::Null),
+                "array" => {
+                    let val: Vec<Value> = serde_json::from_value(
+                        obj.get("value")
+                            .cloned()
+                            .ok_or_else(|| serde::de::Error::custom("missing array value"))?,
+                    )
+                    .map_err(serde::de::Error::custom)?;
+                    Ok(Value::Array(val))
+                }
+                "map" => {
+                    let val: HashMap<String, Value> = serde_json::from_value(
+                        obj.get("value")
+                            .cloned()
+                            .ok_or_else(|| serde::de::Error::custom("missing map value"))?,
+                    )
+                    .map_err(serde::de::Error::custom)?;
+                    Ok(Value::Map(val))
+                }
+                "datetime" => {
+                    let s = obj
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| serde::de::Error::custom("invalid datetime value"))?;
+                    let ts: jiff::Timestamp = s
+                        .parse()
+                        .map_err(|e| serde::de::Error::custom(format!("invalid timestamp: {e}")))?;
+                    Ok(Value::DateTime(ts))
+                }
+                "duration" => {
+                    let s = obj
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| serde::de::Error::custom("invalid duration value"))?;
+                    let span: jiff::Span = s
+                        .parse()
+                        .map_err(|e| serde::de::Error::custom(format!("invalid duration: {e}")))?;
+                    Ok(Value::Duration(Duration(span)))
+                }
+                "set" => {
+                    let vals: Vec<Value> = serde_json::from_value(
+                        obj.get("value")
+                            .cloned()
+                            .ok_or_else(|| serde::de::Error::custom("missing set value"))?,
+                    )
+                    .map_err(serde::de::Error::custom)?;
+                    Ok(Value::Set(vals.into_iter().collect()))
+                }
+                "range" => {
+                    let start = obj
+                        .get("start")
+                        .and_then(|v| v.as_i64())
+                        .ok_or_else(|| serde::de::Error::custom("invalid range start"))?;
+                    let end = obj
+                        .get("end")
+                        .and_then(|v| v.as_i64())
+                        .ok_or_else(|| serde::de::Error::custom("invalid range end"))?;
+                    let step = obj
+                        .get("step")
+                        .and_then(|v| v.as_i64())
+                        .ok_or_else(|| serde::de::Error::custom("invalid range step"))?;
+                    Ok(Value::Range { start, end, step })
+                }
+                other => Err(serde::de::Error::custom(format!(
+                    "unknown Value type: {other}"
+                ))),
             }
         }
     }

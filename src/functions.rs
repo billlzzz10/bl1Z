@@ -1,4 +1,4 @@
-use crate::error::FormulaError;
+use crate::error::{ErrorKind, FormulaError};
 use crate::value::Value;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -8,8 +8,8 @@ use std::rc::Rc;
 /// This trait allows implementing functions that maintain state,
 /// which is not possible with simple fn pointers.
 pub trait Function: Send + Sync {
-    /// Call the function with arguments.
-    fn call(&self, args: &[Value]) -> Result<Value, FormulaError>;
+    /// Call the function with arguments and the registry.
+    fn call(&self, args: &[Value], registry: &FunctionRegistry) -> Result<Value, FormulaError>;
 
     /// Get the function name.
     fn name(&self) -> &str;
@@ -22,7 +22,7 @@ pub trait Function: Send + Sync {
 
 /// Represents a built-in function that can be called during evaluation.
 ///
-/// Functions are the primary extension mechanism of the formula engine.
+/// Functions are the primary extension mechanism of the bl1z.
 /// Each function has a name, expected number of arguments (arity), and
 /// an implementation that takes arguments and returns a result.
 ///
@@ -35,9 +35,9 @@ pub trait Function: Send + Sync {
 ///
 /// ```
 /// use bl1z::functions::BuiltinFunction;
-/// use bl1z::{Value, error::FormulaError};
+/// use bl1z::{Value, error::FormulaError, FunctionRegistry};
 ///
-/// fn my_add(args: &[Value]) -> Result<Value, FormulaError> {
+/// fn my_add(args: &[Value], _registry: &FunctionRegistry) -> Result<Value, FormulaError> {
 ///     match (args.get(0), args.get(1)) {
 ///         (Some(Value::Number(a)), Some(Value::Number(b))) => Ok(Value::Number(a + b)),
 ///         _ => Err(FormulaError::new(
@@ -74,12 +74,12 @@ pub struct BuiltinFunction {
 
     /// Function implementation.
     /// Takes a slice of arguments and returns a result.
-    pub call: fn(&[Value]) -> Result<Value, FormulaError>,
+    pub call: fn(&[Value], &FunctionRegistry) -> Result<Value, FormulaError>,
 }
 
 impl Function for BuiltinFunction {
-    fn call(&self, args: &[Value]) -> Result<Value, FormulaError> {
-        (self.call)(args)
+    fn call(&self, args: &[Value], registry: &FunctionRegistry) -> Result<Value, FormulaError> {
+        (self.call)(args, registry)
     }
 
     fn name(&self) -> &str {
@@ -111,7 +111,7 @@ impl Function for BuiltinFunction {
 /// let mut registry = FunctionRegistry::new();
 ///
 /// // Register a custom function
-/// fn greet(args: &[Value]) -> Result<Value, FormulaError> {
+/// fn greet(args: &[Value], _registry: &FunctionRegistry) -> Result<Value, FormulaError> {
 ///     match args.get(0) {
 ///         Some(Value::String(name)) => Ok(Value::String(format!("Hello, {}!", name))),
 ///         _ => Err(FormulaError::new(
@@ -151,11 +151,13 @@ pub struct FunctionRegistry {
     functions: HashMap<String, FunctionInfo>,
 }
 
-/// Internal function storage - wraps either BuiltinFunction or Box<dyn Function>
+/// Internal function storage — wraps either `BuiltinFunction` or `Box<dyn Function>`.
 struct FunctionInfo {
     builtin: BuiltinFunction,
     #[allow(dead_code)]
     stateful: bool,
+    /// Runtime-defined functions (JSON plugins, stateful fns) dispatch through this.
+    boxed: Option<Rc<dyn Function>>,
 }
 
 impl FunctionInfo {
@@ -163,8 +165,34 @@ impl FunctionInfo {
         Self {
             builtin: func,
             stateful: false,
+            boxed: None,
         }
     }
+
+    fn from_boxed(func: Rc<dyn Function>) -> Self {
+        // Proxy builtin keeps `find()`/arity working; the real call
+        // is dispatched through `boxed` in eval. Calling the proxy
+        // fn pointer directly is an error — boxed fns need the registry.
+        let proxy = BuiltinFunction {
+            name: func.name().to_string(),
+            arity: func.arity(),
+            call: boxed_proxy_call,
+        };
+        Self {
+            builtin: proxy,
+            stateful: true,
+            boxed: Some(func),
+        }
+    }
+}
+
+fn boxed_proxy_call(_args: &[Value], _registry: &FunctionRegistry) -> Result<Value, FormulaError> {
+    Err(FormulaError::new(
+        ErrorKind::PluginError,
+        "E803",
+        "ฟังก์ชันนี้เป็น runtime function ต้องเรียกผ่าน evaluate เท่านั้น",
+        None,
+    ))
 }
 
 impl FunctionRegistry {
@@ -199,7 +227,7 @@ impl FunctionRegistry {
     /// ```
     /// use bl1z::{FunctionRegistry, functions::BuiltinFunction, Value, error::FormulaError};
     ///
-    /// fn double(args: &[Value]) -> Result<Value, FormulaError> {
+    /// fn double(args: &[Value], _registry: &FunctionRegistry) -> Result<Value, FormulaError> {
     ///     match args.get(0) {
     ///         Some(Value::Number(n)) => Ok(Value::Number(n * 2.0)),
     ///         _ => Err(FormulaError::new(
@@ -227,30 +255,40 @@ impl FunctionRegistry {
     }
 
     /// Registers a stateful function using the Function trait.
-    /// Phase 9.5: This allows functions with internal state.
     ///
-    /// Note: The `Function` trait is not yet publicly exported.
-    /// This requires additional design for wrapping trait objects into fn pointers.
+    /// Runtime-defined functions (e.g. loaded from plugin.json) implement
+    /// `Function` and are stored as trait objects, dispatched during eval.
     ///
     /// # Examples
     ///
     /// ```
     /// use bl1z::{FunctionRegistry, Value, error::FormulaError};
+    /// use bl1z::functions::Function;
+    /// use std::rc::Rc;
+    ///
+    /// struct Double;
+    /// impl Function for Double {
+    ///     fn call(&self, args: &[Value], _registry: &FunctionRegistry) -> Result<Value, FormulaError> {
+    ///         match args.get(0) {
+    ///             Some(Value::Number(n)) => Ok(Value::Number(n * 2.0)),
+    ///             _ => Err(FormulaError::new(
+    ///                 bl1z::error::ErrorKind::TypeError,
+    ///                 "E401",
+    ///                 "ต้องการตัวเลข",
+    ///                 None
+    ///             ))
+    ///         }
+    ///     }
+    ///     fn name(&self) -> &str { "double" }
+    ///     fn arity(&self) -> usize { 1 }
+    /// }
     ///
     /// let mut registry = FunctionRegistry::new();
-    /// // Stateful functions require additional wrapper design (Phase 9.5 future work)
-    /// ```
-    /// // For simplicity, prefer register() for most use cases
+    /// registry.register_boxed(Rc::new(Double));
     /// ```
     pub fn register_boxed(&mut self, func: Rc<dyn Function>) {
-        // For Phase 9.5, we need a different registry design.
-        // The fn pointer approach doesn't support closures.
-        // For now, document that stateful functions require BuiltinFunction wrapper.
-        let name = func.name().to_string();
-        let arity = func.arity();
-        let _ = (name, arity);
-        // Note: Full stateful function support requires additional design
-        // to avoid the fn pointer limitation
+        let info = FunctionInfo::from_boxed(func);
+        self.functions.insert(info.builtin.name.clone(), info);
     }
 
     /// Finds a function by name.
@@ -280,6 +318,14 @@ impl FunctionRegistry {
     /// // Non-existent functions return None
     /// assert!(registry.find("nonexistent").is_none());
     /// ```
+    /// Returns all registered function names, sorted.
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.functions.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Finds a function by name in the registry.
     pub fn find(&self, name: &str) -> Option<&BuiltinFunction> {
         self.functions.get(name).map(|info| &info.builtin)
     }
@@ -287,12 +333,12 @@ impl FunctionRegistry {
     /// Finds a function by name, returning name and arity.
     ///
     /// Internal method for evaluation.
-    #[allow(dead_code)]
     pub(crate) fn find_info(&self, name: &str) -> Option<FunctionInfoRef<'_>> {
         self.functions.get(name).map(|info| FunctionInfoRef {
             name: info.builtin.name.as_str(),
             arity: info.builtin.arity,
             call: info.builtin.call,
+            boxed: info.boxed.as_deref(),
         })
     }
 }
@@ -303,5 +349,7 @@ pub(crate) struct FunctionInfoRef<'a> {
     #[allow(dead_code)]
     pub name: &'a str,
     pub arity: usize,
-    pub call: fn(&[Value]) -> Result<Value, FormulaError>,
+    pub call: fn(&[Value], &FunctionRegistry) -> Result<Value, FormulaError>,
+    /// Runtime-defined function (JSON plugin/stateful) to dispatch to.
+    pub boxed: Option<&'a dyn Function>,
 }

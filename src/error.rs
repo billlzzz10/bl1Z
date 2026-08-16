@@ -15,6 +15,7 @@ pub enum ErrorKind {
     FunctionError,
     // E6xx — Context errors
     ContextError,
+    VariableNotFound,
     // Phase 8: Property and index access errors (reserved)
     PropertyNotFound, // E207
     IndexOutOfBounds, // E208
@@ -24,6 +25,8 @@ pub enum ErrorKind {
     SerializationError, // E701
     // Phase 13: Plugin errors
     PluginError, // E801
+    // Phase 15: Recovery errors
+    RecoveryError, // E901
 }
 
 /// ข้อผิดพลาดที่เกิดขึ้นใน engine
